@@ -1,0 +1,3 @@
+PySide6>=6.5
+pynput>=1.7
+requests>=2.28
