@@ -1,2 +1,2 @@
 # appdata/core/version/model.py
-VERSION = "0.12"
+VERSION = "2.0.0"

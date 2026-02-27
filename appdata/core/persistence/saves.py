@@ -3,7 +3,7 @@ import json, os
 from pathlib import Path
 from typing import List, Optional
 
-_BASE_DIR = Path(os.path.expanduser("~")) / "Jivaro" / "AutoQuill" / "Data" / "Saves"
+_BASE_DIR = Path(os.path.expanduser("~")) / "OpenAutoTyper" / "Data" / "Saves"
 
 
 def get_saves_dir() -> Path:

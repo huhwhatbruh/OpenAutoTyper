@@ -11,5 +11,5 @@ def show_new_version_prompt(remote_version):
     msg.addButton("No", QMessageBox.RejectRole)
     msg.exec()
     if msg.clickedButton() == yes_button:
-        webbrowser.open("https://jivaro.net/downloads/programs/info/jtype")
+        webbrowser.open("https://github.com/huhwhatbruh/OpenAutoTyper/releases")
         os._exit(0)

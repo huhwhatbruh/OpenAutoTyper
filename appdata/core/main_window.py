@@ -1,6 +1,5 @@
 # appdata/core/main_window.py
 import time, threading, webbrowser
-from appdata.core.constants import SPEEDS
 from appdata.core.typing.engine import compile_instructions, perform_full_typing_loop
 from appdata.core.persistence import saves
 
@@ -51,9 +50,14 @@ class MainWindowLogic:
             loop_max = int(self.gui.max_e.text())
         except ValueError:
             loop_min, loop_max = 5, 10
+
+        # Convert WPM to per-character delay (1 word ≈ 5 chars)
+        wpm = self.gui.wpm if self.gui.wpm > 0 else self.gui.default_wpm
+        delay = 60.0 / (wpm * 5)
+
         return {
             "instructions": compile_instructions(text),
-            "delay": SPEEDS.get(self.gui.speed, 0.05),
+            "delay": delay,
             "simulate_errors": self.gui.simulate_human_errors,
             "min_int": min_i,
             "max_int": max_i,
@@ -84,7 +88,8 @@ class MainWindowLogic:
             loop_max_s=cfg["loop_max"],
         )
         self.stop_typing()
-        self.gui.typing_thread = None
+        # Thread-safe: emit signal instead of directly touching GUI state
+        self.gui._signals.typing_finished.emit()
 
     def list_save_files(self):
         return saves.list_saves()
@@ -121,7 +126,7 @@ class MainWindowLogic:
             max_e = self.gui.default_max_errors
         return {
             "function_key": self.gui.function_key,
-            "typing_speed": self.gui.speed,
+            "wpm": self.gui.wpm,
             "delay_before": self.gui.delay_cb.isChecked(),
             "loop_enabled": self.gui.loop_cb.isChecked(),
             "loop_min": loop_min,
@@ -136,7 +141,11 @@ class MainWindowLogic:
 
     def _apply_config(self, cfg: dict):
         self.gui.fk.setCurrentText(cfg.get("function_key", self.gui.function_key))
-        self.gui.sp.setCurrentText(cfg.get("typing_speed", self.gui.speed))
+        if "wpm" in cfg:
+            self.gui.wpm_e.setText(str(cfg["wpm"]))
+        elif "typing_speed" in cfg:
+            # Backward compat with old saves that used speed names
+            self.gui.wpm_e.setText(str(self.gui.default_wpm))
         self.gui.delay_cb.setChecked(bool(cfg.get("delay_before", False)))
         self.gui.loop_cb.setChecked(bool(cfg.get("loop_enabled", False)))
         self.gui.min_e.setText(str(cfg.get("loop_min", 5)))
@@ -149,20 +158,8 @@ class MainWindowLogic:
         self.gui.text_edit.setPlainText(cfg.get("typing_text", ""))
         self.gui.function_key_lower = self.gui.function_key.lower()
 
-    def install_action(self):
-        pass
-
     def exit_app(self):
         self.gui.close()
 
-    def open_commands(self):
-        webbrowser.open("https://www.jivaro.net/downloads/programs/info/jtype")
-
-    def open_proxies(self):
-        webbrowser.open("https://jivaro.net/content/blog/the-best-affordable-proxy-providers")
-
-    def open_about_jivaro(self):
-        webbrowser.open("https://www.jivaro.net/")
-
-    def open_discord(self):
-        webbrowser.open("https://discord.gg/GDfX5BFGye")
+    def open_github(self):
+        webbrowser.open("https://github.com/huhwhatbruh/OpenAutoTyper")

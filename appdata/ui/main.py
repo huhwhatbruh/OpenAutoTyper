@@ -1,10 +1,11 @@
 # File: appdata/ui/main.py
+# OpenAutoTyper – main application window
 import threading
 import time
 from typing import Optional
 
 from pynput import keyboard
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal, QObject
 from PySide6.QtGui import QAction, QDoubleValidator, QIcon, QIntValidator
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -25,18 +26,164 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from appdata.core.ads.adsense import create_adsense_view, load_adsense_content
 from appdata.core.constants import APP_NAME, DEFAULT_WPM, FUNCTION_KEYS, WPM_MAX, WPM_MIN
 from appdata.core.main_window import MainWindowLogic
 from appdata.core.version.model import VERSION
 
+# ---------------------------------------------------------------------------
+# Dark-mode stylesheet applied to the entire window for a consistent look.
+# ---------------------------------------------------------------------------
+_DARK_STYLE = """
+QMainWindow, QWidget {
+    background-color: #2b2b2b;
+    color: #e0e0e0;
+    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    font-size: 13px;
+}
 
-class AutoQuillApp(QMainWindow):
+QMenuBar {
+    background: #323232;
+    color: #fff;
+}
+QMenu {
+    background: #323232;
+    color: #fff;
+}
+QMenuBar::item:selected, QMenu::item:selected {
+    background: #454545;
+}
+
+QGroupBox {
+    border: 1px solid #555;
+    border-radius: 6px;
+    margin-top: 10px;
+    padding-top: 14px;
+    font-weight: bold;
+    color: #e0e0e0;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 12px;
+    padding: 0 6px;
+}
+QGroupBox::indicator {
+    width: 14px;
+    height: 14px;
+}
+
+QLineEdit, QPlainTextEdit, QComboBox {
+    background-color: #3c3c3c;
+    color: #e0e0e0;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 4px 6px;
+    selection-background-color: #0078d4;
+}
+QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus {
+    border-color: #0078d4;
+}
+QLineEdit:disabled, QPlainTextEdit:disabled, QComboBox:disabled {
+    background-color: #353535;
+    color: #888;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 20px;
+}
+QComboBox QAbstractItemView {
+    background-color: #3c3c3c;
+    color: #e0e0e0;
+    selection-background-color: #0078d4;
+    border: 1px solid #555;
+}
+
+QPushButton {
+    background-color: #0078d4;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 16px;
+    font-weight: bold;
+}
+QPushButton:hover {
+    background-color: #1a86d9;
+}
+QPushButton:pressed {
+    background-color: #005fa3;
+}
+QPushButton:disabled {
+    background-color: #555;
+    color: #999;
+}
+
+QCheckBox {
+    spacing: 6px;
+    color: #e0e0e0;
+}
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    border: 1px solid #666;
+    background-color: #3c3c3c;
+}
+QCheckBox::indicator:checked {
+    background-color: #0078d4;
+    border-color: #0078d4;
+}
+
+QProgressBar {
+    background-color: #3c3c3c;
+    border: none;
+    border-radius: 5px;
+}
+QProgressBar::chunk {
+    background-color: #0078d4;
+    border-radius: 5px;
+}
+
+QLabel {
+    color: #e0e0e0;
+}
+
+QFrame[frameShape="4"] {  /* HLine */
+    color: #555;
+}
+
+QToolTip {
+    background-color: #3c3c3c;
+    color: #e0e0e0;
+    border: 1px solid #555;
+    padding: 4px;
+    border-radius: 4px;
+}
+"""
+
+# Colour constants for the status indicator
+_STATUS_COLOURS = {
+    "Idle":   "#888888",
+    "Typing": "#4caf50",
+    "Paused": "#ff9800",
+}
+
+
+# ---------------------------------------------------------------------------
+# Thread-safe signal bridge: background threads emit signals that land on the
+# Qt main thread so we never touch widgets from a worker thread.
+# ---------------------------------------------------------------------------
+class _WorkerSignals(QObject):
+    typing_finished = Signal()      # fired when the typing worker exits
+    status_changed = Signal(str)    # fired when status text changes
+
+
+class OpenAutoTyperApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"{APP_NAME} {VERSION}")
         self.setWindowIcon(QIcon("appdata/resources/images/icon.ico"))
         self.resize(500, 600)
+        self.setStyleSheet(_DARK_STYLE)
 
         self.function_key = FUNCTION_KEYS[0]
         self.function_key_lower = self.function_key.lower()
@@ -80,6 +227,11 @@ class AutoQuillApp(QMainWindow):
         self.run_paused_since: Optional[float] = None
         self.run_ended_at: Optional[float] = None
 
+        # Worker signal bridge for thread-safe GUI updates
+        self._signals = _WorkerSignals(self)
+        self._signals.typing_finished.connect(self._on_typing_finished)
+        self._signals.status_changed.connect(self._on_status_changed)
+
         self.logic = MainWindowLogic(self)
         self.init_ui()
         self.create_menu()
@@ -87,36 +239,38 @@ class AutoQuillApp(QMainWindow):
         self.refresh_save_list()
         self._start_progress_timer()
 
+    # ------------------------------------------------------------------
+    # Thread-safe slots
+    # ------------------------------------------------------------------
+    def _on_typing_finished(self):
+        """Called on the main thread when the typing worker exits."""
+        self.typing_thread = None
+
+    def _on_status_changed(self, status: str):
+        """Called on the main thread when status text changes."""
+        self.status_val.setText(status)
+        colour = _STATUS_COLOURS.get(status, "#888")
+        self.status_val.setStyleSheet(f"font-weight:bold; color:{colour};")
+
+    # ------------------------------------------------------------------
+    # Menu
+    # ------------------------------------------------------------------
     def create_menu(self):
         mb = QMenuBar(self)
         self.setMenuBar(mb)
-        mb.setStyleSheet(
-            "QMenuBar{background:#323232;color:#fff;}"
-            "QMenu{background:#323232;color:#fff;}"
-            "QMenuBar::item:selected,QMenu::item:selected{background:#454545;}"
-        )
         fm = mb.addMenu("File")
-        install = QAction("Install", self)
-        install.triggered.connect(self.logic.install_action)
-        fm.addAction(install)
         exit_act = QAction("Exit", self)
         exit_act.triggered.connect(self.logic.exit_app)
         fm.addAction(exit_act)
 
         hm = mb.addMenu("Help")
-        cmd = QAction("Commands", self)
-        cmd.triggered.connect(self.logic.open_commands)
-        hm.addAction(cmd)
-        prxs = QAction("Proxies", self)
-        prxs.triggered.connect(self.logic.open_proxies)
-        hm.addAction(prxs)
-        about = QAction("About Jivaro", self)
-        about.triggered.connect(self.logic.open_about_jivaro)
-        hm.addAction(about)
-        disc = QAction("Discord", self)
-        disc.triggered.connect(self.logic.open_discord)
+        disc = QAction("Github", self)
+        disc.triggered.connect(self.logic.open_github)
         hm.addAction(disc)
 
+    # ------------------------------------------------------------------
+    # UI construction
+    # ------------------------------------------------------------------
     def init_ui(self):
         cw = QWidget()
         self.setCentralWidget(cw)
@@ -129,7 +283,6 @@ class AutoQuillApp(QMainWindow):
 
         human_row = QHBoxLayout()
         human_row.setSpacing(10)
-        # why: keep all "humanization" features aligned and compact on a single row
         human_row.addWidget(self._build_errors_group())
         human_row.addWidget(self._build_breaks_group())
         human_row.addWidget(self._build_simulate_pauses_group())
@@ -140,7 +293,6 @@ class AutoQuillApp(QMainWindow):
 
         self._build_text_group(lay)
         self._build_profiles_group(lay)
-        self._build_ads_footer(lay)
 
     def _build_typing_group(self, parent_layout: QVBoxLayout) -> None:
         tb = QGroupBox("Typing")
@@ -185,7 +337,7 @@ class AutoQuillApp(QMainWindow):
         self.sticky_cb = QCheckBox("Sticky typing")
         self.sticky_cb.setChecked(self.default_sticky_typing)
         self.sticky_cb.setToolTip(
-            "When enabled, AutoQuill keeps typing into the window/control that was focused when typing started."
+            "When enabled, OpenAutoTyper keeps typing into the window/control that was focused when typing started."
         )
 
         toggles = QHBoxLayout()
@@ -244,10 +396,11 @@ class AutoQuillApp(QMainWindow):
 
         status_lab = QLabel("Status:")
         self.status_val = QLabel("Idle")
+        self.status_val.setStyleSheet(f"font-weight:bold; color:{_STATUS_COLOURS['Idle']};")
 
         self.progress_val = QLabel("Typed 0/0 chars • ETA --:--")
 
-        hint = "Hotkey starts typing; during typing it toggles Pause/Resume. Press Esc to Stop."
+        hint = "Hotkey starts/stops typing. Press Esc to force-stop at any time."
         self.status_val.setToolTip(hint)
         self.progress_val.setToolTip(hint)
 
@@ -506,16 +659,9 @@ class AutoQuillApp(QMainWindow):
 
         parent_layout.addWidget(profiles)
 
-    def _build_ads_footer(self, parent_layout: QVBoxLayout) -> None:
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setFrameShadow(QFrame.Sunken)
-        parent_layout.addWidget(sep)
-
-        self.ad_view = create_adsense_view()
-        parent_layout.addWidget(self.ad_view, alignment=Qt.AlignHCenter)
-        load_adsense_content(self.ad_view)
-
+    # ------------------------------------------------------------------
+    # Progress timer
+    # ------------------------------------------------------------------
     def _start_progress_timer(self) -> None:
         self._progress_timer = QTimer(self)
         self._progress_timer.setInterval(150)
@@ -539,7 +685,10 @@ class AutoQuillApp(QMainWindow):
         if total > 0 and typed > total:
             typed = total
 
+        # Update status colour via the signal-safe setter
         self.status_val.setText(status)
+        colour = _STATUS_COLOURS.get(status, "#888")
+        self.status_val.setStyleSheet(f"font-weight:bold; color:{colour};")
 
         if total <= 0:
             self.progress_val.setText("Typed 0/0 chars • ETA --:--")
@@ -586,6 +735,9 @@ class AutoQuillApp(QMainWindow):
             return f"{h:d}:{m:02d}:{s:02d}"
         return f"{m:02d}:{s:02d}"
 
+    # ------------------------------------------------------------------
+    # Event handlers
+    # ------------------------------------------------------------------
     def on_toggled_breaks(self, checked: bool):
         for w in (
             self.break_words_min_e,
@@ -668,26 +820,40 @@ class AutoQuillApp(QMainWindow):
             pass
 
     def on_wpm_editing_finished(self):
+        text = self.wpm_e.text().strip()
+        if not text:
+            # Empty field → reset to default and notify user
+            self.wpm = self.default_wpm
+            self.wpm_e.setText(str(self.default_wpm))
+            return
         try:
-            val = int(self.wpm_e.text())
+            val = int(text)
         except Exception:
             val = self.default_wpm
         val = max(WPM_MIN, min(WPM_MAX, val))
         self.wpm = val
         self.wpm_e.setText(str(val))
 
+    # ------------------------------------------------------------------
+    # Keyboard listener  (Esc handler included)
+    # ------------------------------------------------------------------
     def start_keyboard_listener(self):
         self.listener = keyboard.Listener(on_release=self.on_key_release)
         self.listener.start()
 
     def on_key_release(self, k):
+        # Esc always force-stops typing
+        if k == keyboard.Key.esc:
+            if self.typing_active_evt.is_set():
+                self.logic.stop_typing()
+            return
         self.logic.handle_key_press(k)
 
+    # ------------------------------------------------------------------
+    # Convenience wrappers
+    # ------------------------------------------------------------------
     def start_typing(self):
         self.logic.start_typing()
 
     def stop_typing(self):
         self.logic.stop_typing()
-
-    def invoke_typing_logic(self):
-        self.logic.invoke_typing_logic()
