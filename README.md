@@ -1,4 +1,4 @@
-## Open Auto Typer
+# Open Auto Typer
 
 <p align="center">
   Fast • Lightweight • Open Source
@@ -6,14 +6,14 @@
 
 ---
 
-## Features
+# Features
 - Adjustable typing speed  
 - Custom text input  
 - Start / Stop hotkeys  
 
 ---
 
-## ▶ Usage
+# ▶ Usage
 # Create a virtualenv with python 3.14 and install requirements.txt then run
 ```bash
 python OpenAutoTyper.py
