@@ -1,7 +1,7 @@
 # Open Auto Typer
 
 <p align="center">
-  Fast • Lightweight • Open Source
+  Fast • Lightweight • Open Source • Cross-platform integration with all Operating Systems
 </p>
 
 ---
