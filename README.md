@@ -14,7 +14,8 @@
 ---
 
 ## ▶ Usage
+# Create a virtualenv with python 3.14 and install requirements.txt then run
 ```bash
-python main.py
+python OpenAutoTyper.py
 ```
 ## A compiled EXE will be coming soon!
