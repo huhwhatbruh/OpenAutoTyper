@@ -1,4 +1,4 @@
-# Open Auto Typer
+## Open Auto Typer
 
 <p align="center">
   Fast • Lightweight • Open Source
