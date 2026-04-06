@@ -5,48 +5,63 @@ on:
     types: [created]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
-        # ubuntu-20.04 is CRITICAL here. Building on an older Linux ensures 
-        # the glibc version is low, making it work on Arch, CachyOS, Fedora, etc.
-        os: [ubuntu-20.04, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest]
 
     runs-on: ${{ matrix.os }}
 
     steps:
-    - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-        cache: 'pip'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-    - name: Install dependencies (Linux - Arch/Ubuntu/Universal Prep)
-      if: runner.os == 'Linux'
-      run: |
-        sudo apt-get update
-        # Added extra X11 libraries so PyInstaller bundles the right GUI dependencies
-        sudo apt-get install -y python3-tk python3-dev xclip scrot xvfb libx11-dev x11-utils xdotool libxext-dev
+      - name: Install Linux system dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk python3-dev xclip scrot build-essential
 
-    - name: Install dependencies (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        brew install tcl-tk
+      - name: Install Python packages
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller customtkinter pyautogui pyperclip
 
-    - name: Install Python packages
-      run: |
-        python -m pip install --upgrade pip
-        pip install customtkinter pyautogui pyperclip pyinstaller
+      - name: Build executable
+        run: |
+          pyinstaller --clean --onefile --noconsole --name OpenAutoTyper OpenAutoTyper.py
 
-    - name: Build executable
-      run: |
-        pyinstaller --onefile --noconsole --name OpenAutoTyper OpenAutoTyper.py
+      - name: Rename build output (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          mkdir -p release
+          cp dist/OpenAutoTyper release/OpenAutoTyper-linux
 
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: OpenAutoTyper-${{ matrix.os }}
-        path: dist/
+      - name: Rename build output (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release
+          Copy-Item dist/OpenAutoTyper.exe release/OpenAutoTyper-windows.exe
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenAutoTyper-${{ matrix.os }}
+          path: release/*
+
+      - name: Upload release asset
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
