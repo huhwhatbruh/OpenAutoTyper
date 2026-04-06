@@ -9,13 +9,91 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  build-linux:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - distro: ubuntu
+            container: ubuntu:22.04
+            artifact_name: OpenAutoTyper-linux-ubuntu
+            pkg_install: |
+              apt-get update && apt-get install -y \
+                python3 python3-pip python3-tk python3-dev \
+                xclip scrot build-essential
 
-    runs-on: ${{ matrix.os }}
+          - distro: debian
+            container: debian:bookworm
+            artifact_name: OpenAutoTyper-linux-debian
+            pkg_install: |
+              apt-get update && apt-get install -y \
+                python3 python3-pip python3-tk python3-dev \
+                xclip scrot build-essential
+
+          - distro: fedora
+            container: fedora:latest
+            artifact_name: OpenAutoTyper-linux-fedora
+            pkg_install: |
+              dnf install -y \
+                python3 python3-pip python3-tkinter \
+                xclip scrot gcc make
+
+          - distro: archlinux
+            container: archlinux:latest
+            artifact_name: OpenAutoTyper-linux-arch
+            pkg_install: |
+              pacman -Syu --noconfirm \
+                python python-pip tk \
+                xclip scrot base-devel
+
+          - distro: opensuse
+            container: opensuse/leap:latest
+            artifact_name: OpenAutoTyper-linux-opensuse
+            pkg_install: |
+              zypper install -y \
+                python3 python3-pip python3-tk \
+                xclip scrot gcc make
+
+    runs-on: ubuntu-latest
+    container: ${{ matrix.container }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: ${{ matrix.pkg_install }}
+
+      - name: Install Python packages
+        run: |
+          python3 -m pip install --upgrade pip --break-system-packages || python3 -m pip install --upgrade pip
+          pip3 install pyinstaller customtkinter pyautogui pyperclip --break-system-packages || \
+          pip3 install pyinstaller customtkinter pyautogui pyperclip
+
+      - name: Build executable
+        run: |
+          python3 -m PyInstaller --clean --onefile --noconsole \
+            --name OpenAutoTyper OpenAutoTyper.py
+
+      - name: Collect artifact
+        run: |
+          mkdir -p release
+          cp dist/OpenAutoTyper release/${{ matrix.artifact_name }}
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: release/${{ matrix.artifact_name }}
+
+      - name: Upload release asset
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/${{ matrix.artifact_name }}
+
+  build-windows:
+    runs-on: windows-latest
 
     steps:
       - name: Checkout
@@ -26,12 +104,6 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Linux system dependencies
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-tk python3-dev xclip scrot build-essential
-
       - name: Install Python packages
         run: |
           python -m pip install --upgrade pip
@@ -41,14 +113,7 @@ jobs:
         run: |
           pyinstaller --clean --onefile --noconsole --name OpenAutoTyper OpenAutoTyper.py
 
-      - name: Rename build output (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          mkdir -p release
-          cp dist/OpenAutoTyper release/OpenAutoTyper-linux
-
-      - name: Rename build output (Windows)
-        if: matrix.os == 'windows-latest'
+      - name: Collect artifact
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path release
@@ -57,11 +122,11 @@ jobs:
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: OpenAutoTyper-${{ matrix.os }}
-          path: release/*
+          name: OpenAutoTyper-windows
+          path: release/OpenAutoTyper-windows.exe
 
       - name: Upload release asset
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          files: release/*
+          files: release/OpenAutoTyper-windows.exe
